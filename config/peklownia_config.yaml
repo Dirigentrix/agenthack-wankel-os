@@ -1,0 +1,16 @@
+curing_process:
+  resonance_frequency_hz: 156
+  phases:
+    - name: LEAF
+      description: Raw material & Brine monitoring
+      id: 0
+    - name: STEM
+      description: Injector & Tumbler execution
+      id: 1
+    - name: FRUIT
+      description: Maturation & Quality assurance telemetry to Maestro
+      id: 2
+  targets:
+    moisture_content: 0.72
+    salt_concentration: 0.03
+    temperature_celsius: 4.0
