@@ -1,18 +1,22 @@
 """
-Moduł: AviationHACCP v1.3 GUARDIAN
+Moduł: AviationHACCP v1.5 GUARDIAN
 Opis: Zaawansowany system kontroli bezpieczeństwa żywności dla cateringu lotniczego.
-Zgodność: IATA, WHO, FALCPA, EU FIC, integracja z PeklowniaBatch.
+Zgodność: IATA, WHO, FALCPA, EU FIC, integracja z PeklowniaBatch i Google Sheets.
 """
 
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from enum import Enum
+import logging
+
+logger = logging.getLogger("AviationHACCP")
 
 class CCPStatus(Enum):
     PASS = "ZGODNY"
     FAIL = "NIEZGODNY"
     WARNING = "OSTRZEŻENIE"
+    DATA_ERROR = "BRAK_DANYCH"
 
 @dataclass
 class CCPDefinition:
@@ -32,6 +36,7 @@ class AviationHACCP:
         self.allergens_protocols = self._load_allergen_protocols()
         self.critical_alerts: List[str] = []
         self.cold_chain_log: List[Dict] = []
+        self.sensor_failures: List[str] = []
 
     def _load_ccp_definitions(self) -> Dict[str, CCPDefinition]:
         return {
@@ -54,52 +59,92 @@ class AviationHACCP:
             "ZAŁOGA": "Certyfikaty IATA/WHO."
         }
 
-    def validate_ccp(self, ccp_id: str, measured_value: float) -> CCPStatus:
+    def _is_malformed(self, val: Any) -> bool:
+        if val is None: return True
+        if isinstance(val, str):
+            if val.upper() in ["ERR", "???", "NAN", "NULL"]: return True
+            try:
+                float(val)
+                return False
+            except ValueError:
+                return True
+        return False
+
+    def validate_ccp(self, ccp_id: str, measured_value: Any) -> CCPStatus:
+        if self._is_malformed(measured_value):
+            msg = f"[SENSOR FAILURE] {ccp_id}: Dane uszkodzone lub brak odczytu ({measured_value})"
+            self.sensor_failures.append(msg)
+            logger.warning(msg)
+            return CCPStatus.DATA_ERROR
+
+        val = float(measured_value)
         if ccp_id not in self.ccp_definitions:
-            return CCPStatus.FAIL
+            return CCPStatus.PASS
+        
         ccp = self.ccp_definitions[ccp_id]
 
-        if ccp_id == "CCP1" and measured_value < ccp.min_limit:
-            self._trigger_alert(ccp)
+        if ccp_id == "CCP1" and val < ccp.min_limit:
+            self._trigger_alert(ccp, val)
             return CCPStatus.FAIL
-        elif ccp_id in ["CCP3", "CCP5", "CCP6"] and (measured_value > 4.0 and measured_value < 60.0):
-            self._trigger_alert(ccp)
+        elif ccp_id in ["CCP3", "CCP5", "CCP6"] and (val > 4.0 or val < 0.0):
+            self._trigger_alert(ccp, val)
             return CCPStatus.FAIL
+        
+        if val == 0.0 and ccp_id == "CCP6":
+            self.critical_alerts.append(f"[SUSPICIOUS] CCP6: Odczyt 0.0 - Możliwy flatline sensora.")
+            
         return CCPStatus.PASS
 
-    def _trigger_alert(self, ccp: CCPDefinition):
-        alert = f"[IATA ALERT] {ccp.id} ({ccp.name}): Przekroczono limit. Akcja: {ccp.corrective_action}"
+    def _trigger_alert(self, ccp: CCPDefinition, val: float):
+        risk = "RYZYKO ZAMROŻENIA" if val < 0.0 else "PRZEKROCZENIE TEMP"
+        alert = f"[IATA ALERT] {ccp.id} ({ccp.name}): {risk} ({val}°C). Akcja: {ccp.corrective_action}"
         self.critical_alerts.append(alert)
 
-    def register_cold_chain(self, stage: str, temp_c: float):
-        entry = {"stage": stage, "temp_c": temp_c, "timestamp": datetime.now().isoformat()}
+    def register_cold_chain(self, stage: str, temp_c: Any):
+        if self._is_malformed(temp_c):
+            self.sensor_failures.append(f"[COLD CHAIN FAILURE] {stage}: BRAK_DANYCH ({temp_c})")
+            return
+
+        val = float(temp_c)
+        entry = {"stage": stage, "temp_c": val, "timestamp": datetime.now().isoformat()}
         self.cold_chain_log.append(entry)
-        # Auto-walidacja
-        if "cold" in stage.lower() and temp_c > 4.0:
-            self._trigger_alert(self.ccp_definitions.get("CCP5", CCPDefinition("CCP5", "", "")))
+        
+        if val > 4.0 or val < 0.0:
+            msg = f"[IATA ALERT] Log: {stage} ({val}°C) poza zakresem 0-4°C."
+            if val < 0.0: msg += " ALARM: Ryzyko zamrożenia (Deep Freeze)."
+            self.critical_alerts.append(msg)
 
     def generate_report(self) -> str:
-        status = "BEZPIECZNY" if not self.critical_alerts else "KRYTYCZNY"
+        status = "BEZPIECZNY" if not (self.critical_alerts or self.sensor_failures) else "KRYTYCZNY"
+        if self.sensor_failures and not self.critical_alerts:
+            status = "NIEPEWNY (AWARIA SENSORÓW)"
+            
         report = f"""
 ==================================================
-RAPORT IATA AVIATION HACCP — GUARDIAN
+RAPORT IATA AVIATION HACCP — GUARDIAN v1.5
 Lot ID: {self.flight_id}
 Status: {status}
 Czas: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ==================================================
-ALERTY: {len(self.critical_alerts)}
+AWARIE SENSORÓW: {len(self.sensor_failures)}
 """
+        for f in self.sensor_failures:
+            report += f" - {f}\n"
+
+        report += f"\nALERTY KRYTYCZNE: {len(self.critical_alerts)}\n"
         for alert in self.critical_alerts:
             report += f" - {alert}\n"
-        if not self.critical_alerts:
-            report += " Wszystkie CCP ZGODNE.\n"
+            
+        if not (self.critical_alerts or self.sensor_failures):
+            report += " Wszystkie CCP ZGODNE. Brak awarii.\n"
+            
         report += "=================================================="
         return report
 
-# Test
 if __name__ == "__main__":
-    system = AviationHACCP("LO123_WAW_JFK")
-    system.validate_ccp("CCP1", 76.5)
-    system.validate_ccp("CCP5", 7.2)  # alert
-    system.register_cold_chain("transport", 3.5)
+    # Internal baseline test
+    system = AviationHACCP("BASELINE_TEST")
+    system.validate_ccp("CCP1", 76.0)
+    system.validate_ccp("CCP5", 5.2)
+    system.register_cold_chain("Cruise", -2.0)
     print(system.generate_report())
