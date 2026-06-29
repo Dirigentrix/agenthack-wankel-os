@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dartrix"
+version = "0.1.0-alpha"
+description = "Deterministic Agentic System for Continuous Cold Chain Compliance"
+authors = [{name = "Daniel Adrian Ratajczyk"}]
+license = {text = "MIT"}
+requires-python = ">=3.14"
+dependencies = [
+    "requests",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]

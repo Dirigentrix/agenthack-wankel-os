@@ -1,65 +1,77 @@
 import os
-import logging
-from flask import Flask, jsonify, request
-from scada_docs.aviation_haccp import AviationHACCP
-from scada_docs.document_automator import GoogleSheetMock, TranslationEngine, DocumentMapper
+import time
+import json
+from bridge_client import DARTRIXBridgeClient
+from haccp_layer import HACCPLayer
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("SCADA_Main")
+class DARTRIXStateMachine:
+    def __init__(self):
+        self.state = "INITIALIZING"
+        self.history = []
 
-app = Flask(__name__)
+    def transition(self, new_state):
+        print(f"[DARTRIX] State Transition: {self.state} -> {new_state}")
+        self.history.append({"from": self.state, "to": new_state, "time": time.time()})
+        self.state = new_state
 
-# Note: Integration with real Google Sheets will require credentials.json
-# and 'google-auth', 'google-api-python-client' in requirements.txt
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "REJESTR_ZLECONYCH_ID")
-
-@app.route('/')
-def index():
-    return jsonify({
-        "status": "online",
-        "version": "1.5.0",
-        "engine": "Guardian AviationHACCP",
-        "ready_for_sheets": os.path.exists("credentials.json")
-    })
-
-@app.route('/api/validate-batch', methods=['POST'])
-def validate_batch():
-    data = request.json
-    batch_id = data.get("batch_id", "UNKNOWN_BATCH")
-    measurements = data.get("measurements", {})
-    cold_chain = data.get("cold_chain", [])
-
-    logger.info(f"Received validation request for batch: {batch_id}")
-    
-    haccp = AviationHACCP(batch_id)
-    
-    for ccp_id, val in measurements.items():
-        haccp.validate_ccp(ccp_id, val)
+class DARTRIXCore:
+    def __init__(self, bridge_url, gemini_key=None):
+        self.bridge = DARTRIXBridgeClient(bridge_url)
+        self.haccp = HACCPLayer()
+        self.sm = DARTRIXStateMachine()
+        self.gemini_key = gemini_key
         
-    for stage, temp in cold_chain:
-        haccp.register_cold_chain(stage, temp)
+    def gemini_extract_data(self, document_content):
+        """
+        Modular placeholder for Gemini AI document extraction.
+        In a real scenario, this would use the GEMINI_API_KEY to call the API.
+        """
+        if not self.gemini_key:
+            return {"status": "error", "message": "Gemini API key not configured"}
         
-    report = haccp.generate_report()
+        print("[DARTRIX] AI Analyzing document with Gemini...")
+        # Placeholder logic
+        return {"extracted_temp": 4.2, "point_id": "refrigerator_temp"}
+
+    def dartrix_cycle(self):
+        """Main execution cycle for DARTRIX."""
+        self.sm.transition("READY")
+        
+        try:
+            while True:
+                self.sm.transition("POLLING")
+                # Read from Google Sheets via Bridge
+                telemetry = self.bridge.read_telemetry()
+                print(f"[DARTRIX] Telemetry data: {telemetry}")
+                
+                # Mock analysis step
+                self.sm.transition("ANALYZING")
+                test_point = "refrigerator_temp"
+                test_val = 4.5
+                
+                is_safe, msg = self.haccp.validate_reading(test_point, test_val)
+                print(f"[DARTRIX] HACCP Check: {msg}")
+                
+                # Write log back to sheet
+                self.sm.transition("LOGGING")
+                log_entry = [time.strftime("%Y-%m-%d %H:%M:%S"), "CORE_CYCLE", f"HACCP: {msg}"]
+                self.bridge.write_log(log_entry)
+                
+                self.sm.transition("IDLE")
+                print("[DARTRIX] Cycle complete. Sleeping for 60 seconds...")
+                time.sleep(60)
+                
+        except KeyboardInterrupt:
+            self.sm.transition("SHUTDOWN")
+            print("[DARTRIX] System stopped by user.")
+
+if __name__ == "__main__":
+    # Load configuration
+    BRIDGE_URL = "https://script.google.com/macros/s/AKfycbz09Kclvqfa7z3uaWq-mr5xEx_CFiDZTdYDL3jv3a9Ylr7LC6J9FqS4WOOiv_PWLBCI/exec"
+    GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
     
-    return jsonify({
-        "batch_id": batch_id,
-        "status": "Processed",
-        "report": report,
-        "critical_alerts_count": len(haccp.critical_alerts),
-        "sensor_failures_count": len(haccp.sensor_failures)
-    })
-
-@app.route('/api/sheets/config', methods=['GET'])
-def get_sheets_config():
-    return jsonify({
-        "spreadsheet_id": SPREADSHEET_ID,
-        "credentials_status": "Found" if os.path.exists("credentials.json") else "Missing",
-        "instructions": "Upload credentials.json to the root directory to enable Google Sheets sync."
-    })
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    # In practice, you might load from .env here using a library like python-dotenv
+    # Since we can't install libraries, we assume the environment is pre-set.
+    
+    core = DARTRIXCore(BRIDGE_URL, GEMINI_KEY)
+    core.dartrix_cycle()

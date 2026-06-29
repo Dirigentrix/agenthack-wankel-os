@@ -1,0 +1,11 @@
+run = "python main.py"
+entrypoint = "main.py"
+
+[packager]
+language = "python3"
+
+[interpreter]
+powerOfTwo = true
+
+[nix]
+channel = "stable-23_11"
