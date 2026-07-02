@@ -37,6 +37,7 @@ Leveraging high-capacity LLM reasoning for autonomous decision-making and natura
 
 ### 5. UiPath Automation Cloud Integration
 DARTRIX OS is fully integrated with the UiPath ecosystem for large-scale orchestration and telemetry management.
+- **Live Labs/Cloud Environment Node**: [Global Monitoring & Orchestrator Overview](https://cloud.uipath.com/dartrixos/DefaultTenant/orchestrator_/global-monitoring/overview?tid=2478993&fid=7996609&index=0&size=25)
 - **Maestro & Orchestrator APIs**: Bi-directional communication for command-and-control and resource allocation.
 - **Telemetry Synchronization**: Real-time mirroring of edge data to the UiPath Automation Cloud for global visibility and predictive maintenance.
 
